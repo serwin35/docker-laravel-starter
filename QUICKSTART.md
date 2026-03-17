@@ -175,8 +175,18 @@ my-project/
 ├── public/
 ├── resources/
 ├── routes/
-├── storage/                ← runtime files (gitignored)
+├── storage/                ← Laravel runtime files — on disk, gitignored
+│   ├── app/public/         ← user-uploaded files
+│   ├── framework/          ← cache, sessions, compiled views
+│   └── logs/               ← application logs
+│
 ├── tests/
+│
+├── .data/                  ← database & service data — on disk, gitignored
+│   ├── mysql/              ← MySQL data directory (auto-created on first start)
+│   ├── pgsql/              ← PostgreSQL data directory
+│   ├── redis/              ← Redis persistence (dump.rdb / appendonly.aof)
+│   └── minio/              ← MinIO object storage (dev only)
 │
 ├── .docker/                ← Docker configuration (from starter kit)
 │   ├── php/
@@ -371,6 +381,76 @@ Control Xdebug mode via `.env`:
 XDEBUG_MODE=debug      # step debugging
 XDEBUG_MODE=coverage   # code coverage only
 XDEBUG_MODE=off        # disabled (faster startup)
+```
+
+---
+
+## Data Management
+
+All database and service data lives in `.data/` on your host disk — not inside Docker named volumes. This means `docker compose down -v` **cannot** destroy your database.
+
+```
+.data/
+├── mysql/     ← MySQL data directory
+├── pgsql/     ← PostgreSQL data directory
+├── redis/     ← Redis persistence (dump.rdb / appendonly.aof)
+└── minio/     ← MinIO object storage (dev only)
+```
+
+> `storage/` (Laravel uploads, logs, cache) is already on disk via the app bind mount — no separate handling needed.
+
+### Backup
+
+```bash
+# MySQL — dump to file
+docker compose exec mysql mysqldump \
+  -u root -p${DB_ROOT_PASSWORD:-rootsecret} \
+  ${DB_DATABASE:-laravel} > backup-$(date +%Y%m%d).sql
+
+# PostgreSQL — dump to file
+docker compose exec pgsql pg_dump \
+  -U ${DB_USERNAME:-laravel} ${DB_DATABASE:-laravel} > backup-$(date +%Y%m%d).sql
+
+# Raw file backup (works for all services while containers are stopped)
+tar czf backup-data-$(date +%Y%m%d).tar.gz .data/
+```
+
+### Reset a single service
+
+```bash
+# MySQL
+make down && rm -rf .data/mysql && make up DB=mysql
+
+# PostgreSQL
+make down && rm -rf .data/pgsql && make up DB=pgsql
+
+# Redis
+make down && rm -rf .data/redis && make up DB=mysql
+
+# MinIO
+make down && rm -rf .data/minio && COMPOSE_PROFILES=minio,mysql make up
+```
+
+### Full reset (wipe all data, keep Laravel code)
+
+```bash
+make down
+rm -rf .data/
+make up DB=mysql
+make migrate
+```
+
+### Inspect data on disk
+
+```bash
+# See how much space each service uses
+du -sh .data/*
+
+# List MySQL data files
+ls -lh .data/mysql/
+
+# Tail Redis persistence file
+ls -lh .data/redis/
 ```
 
 ---
