@@ -38,6 +38,9 @@ A complete, battle-tested Docker setup that goes further than Laravel Sail:
 | Xdebug 3 pre-configured | ❌ | ✅ |
 | Opcache + JIT in production | ❌ | ✅ |
 | Mailpit (fake SMTP) | ✅ | ✅ |
+| MinIO (local S3-compatible storage) | ❌ | ✅ |
+| Laravel Reverb (WebSocket server) | ❌ | ✅ |
+| SSL/HTTPS + cert generator | ❌ | ✅ |
 | Queue worker + Scheduler | ❌ | ✅ |
 | Security headers in Nginx | ❌ | ✅ |
 
@@ -49,6 +52,7 @@ A complete, battle-tested Docker setup that goes further than Laravel Sail:
 ┌─────────────────────────────────────────────────┐
 │                    Nginx (stable)                │
 │         Security headers · Gzip · Cache          │
+│         HTTP + HTTPS (app-ssl.conf)              │
 └─────────────────────┬───────────────────────────┘
                       │ FastCGI
 ┌─────────────────────▼───────────────────────────┐
@@ -65,7 +69,9 @@ A complete, battle-tested Docker setup that goes further than Laravel Sail:
 │ (via profiles) │
 └────────────────┘
 
-Queue Worker · Scheduler (cron) · Mailpit (dev)
+── DEV only (via profiles) ──────────────────────
+Mailpit (SMTP)  ·  MinIO (S3)  ·  Reverb (WS)
+Queue Worker    ·  Scheduler   ·  Vite dev server
 ```
 
 ---
@@ -110,42 +116,35 @@ Queue Worker · Scheduler (cron) · Mailpit (dev)
 
 ## 🚀 Quick Start
 
-### 1. Prerequisites
+> **Full step-by-step guide** → [QUICKSTART.md](./QUICKSTART.md)
 
-- Docker Desktop (or Docker Engine + Compose v2)
-- GitHub CLI: `brew install gh`
-
-### 2. Clone & Setup
+### New project (install Laravel inside Docker — no local PHP required)
 
 ```bash
-git clone https://github.com/serwin35/docker-laravel-starter.git
-cd docker-laravel-starter
-
-# Copy your Laravel app here, then:
-make setup DB=mysql        # or DB=pgsql
-```
-
-That's it. App running at **http://localhost:80**
-
-### 3. Manual Setup
-
-```bash
+git clone https://github.com/serwin35/docker-laravel-starter.git my-project
+cd my-project
 cp .env.example .env
 
-# Start with MySQL (default)
-make up DB=mysql
-
-# OR start with PostgreSQL
-make up DB=pgsql
-
-# Install dependencies
-make composer ARGS="install"
-make artisan  ARGS="key:generate"
-make migrate
-
-# Start Vite dev server (separate terminal)
-make npm-dev
+make laravel-new      # installs Laravel inside the container
+make setup DB=mysql   # build + up + key:generate + migrate
 ```
+
+### Existing Laravel project
+
+```bash
+# Inside your existing Laravel project directory:
+curl -fsSL https://github.com/serwin35/docker-laravel-starter/archive/refs/heads/main.tar.gz \
+  | tar xz --strip-components=1 \
+    --exclude='docker-laravel-starter-main/README.md' \
+    --exclude='docker-laravel-starter-main/LICENSE' \
+    --exclude='docker-laravel-starter-main/.git'
+
+# Merge .env.example Docker variables into your existing .env
+make up DB=mysql
+make migrate
+```
+
+App available at **http://localhost:80**
 
 ---
 
@@ -177,30 +176,35 @@ DB_PORT=5432
 ## 🛠️ Makefile Reference
 
 ```bash
-# Environment
-make up              # Start dev (DB=mysql|pgsql)
-make down            # Stop all containers
-make ps              # Container status
-make logs            # Tail logs (ARGS=nginx to filter one service)
-make shell           # bash in php container
+# First run
+make laravel-new          # Install fresh Laravel inside the container (no local PHP)
+make setup DB=mysql       # Build + up + install + key:generate + migrate
+
+# Environment management
+make up DB=mysql          # Start (DB=mysql|pgsql, ENV=dev|staging|prod)
+make down                 # Stop all containers
+make ps                   # Container status
+make logs                 # Tail logs (ARGS=php to filter one service)
+make shell                # bash inside the php container
 
 # Laravel
 make artisan  ARGS="make:model Post -mcr"
 make composer ARGS="require spatie/laravel-permission"
 make migrate
 make seed
-make fresh           # migrate:fresh --seed
+make fresh                # migrate:fresh --seed
 make tinker
+make cache-clear          # Clear all Laravel caches
 
 # Testing
 make test
 make coverage
-make lint            # PHP Pint
-make analyse         # PHPStan
+make lint                 # PHP Pint
+make analyse              # PHPStan
 
 # Frontend
-make npm-dev         # Vite dev server
-make npm-build       # Production assets
+make npm-dev              # Vite dev server with hot-reload
+make npm-build            # Production asset build
 make npm ARGS="add alpinejs"
 
 # Database CLI
@@ -208,9 +212,71 @@ make db-mysql
 make db-pgsql
 make db-redis
 
-# First-time setup
-make setup           # build + up + composer install + key:generate + migrate
+# Optional services (require profiles)
+COMPOSE_PROFILES=minio,mysql   make up   # + MinIO S3 storage
+COMPOSE_PROFILES=reverb,mysql  make up   # + Laravel Reverb WebSocket
+COMPOSE_PROFILES=npm,mysql     make up   # + Vite dev server in background
 ```
+
+---
+
+## 🔄 Zero-Downtime Releases & Rollback
+
+One of the key features of this starter is the **git SHA-based releases** system — the same pattern used by Deployer, Capistrano and Envoyer, implemented in pure Bash + Docker.
+
+### How it works
+
+```
+/var/www/myapp/
+├── releases/
+│   ├── a1b2c3d4.../    ← two weeks ago
+│   ├── e5f6g7h8.../    ← previous deploy   (available for rollback)
+│   └── i9j0k1l2.../    ← active deploy     ← current points here
+│
+├── shared/
+│   ├── .env            ← shared — CI uploads before each deploy
+│   └── storage/        ← logs, uploads, cache — persistent across releases
+│
+└── current -> releases/i9j0k1l2...    ← symlink, switched atomically
+```
+
+### Every deploy
+
+1. Creates `releases/{git-sha}/` directory
+2. Extracts code via `git archive`
+3. Symlinks `shared/.env` and `shared/storage/`
+4. Switches `current` symlink **atomically** (`mv -T`) — zero downtime
+5. Runs `docker compose up -d --wait` — containers start with new code
+6. Runs `php artisan migrate --force`
+7. Prunes old releases (keeps last **5** by default)
+
+### Rollback — one click
+
+**Via GitHub UI** (recommended):
+
+```
+Actions → Rollback → select environment → Run workflow
+```
+
+**Via SSH on the server:**
+
+```bash
+# Roll back to the previous release automatically:
+DEPLOY_PATH=/var/www/app ENVIRONMENT=prod bash scripts/rollback.sh
+
+# Roll back to a specific commit:
+GIT_SHA=e5f6g7h8 DEPLOY_PATH=/var/www/app ENVIRONMENT=prod bash scripts/rollback.sh
+```
+
+Rollback is **instant** — it only switches the symlink and restarts containers. No image pull needed.
+
+### Why git SHA instead of a timestamp?
+
+| Timestamp `20240319150000` | Git SHA `e5f6g7h8` |
+|---|---|
+| No link to code | `git show e5f6g7h8` — you know exactly what you deployed |
+| Timezone ambiguity | Globally unique identifier |
+| "When was this?" | "What was in this?" |
 
 ---
 
