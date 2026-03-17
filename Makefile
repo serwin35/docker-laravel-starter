@@ -19,7 +19,7 @@ COMPOSE_FLAGS = --profile $(DB)
         test coverage lint \
         db-mysql db-pgsql db-redis \
         npm npm-build npm-install \
-        env-check
+        env-check laravel-new setup
 
 # ── Default target ─────────────────────────────────────────────────────────────
 .DEFAULT_GOAL := help
@@ -132,7 +132,18 @@ env-check: ## Verify .env file exists
 	@test -f .env || (echo "ERROR: .env not found. Run: cp .env.example .env" && exit 1)
 	@echo ".env OK"
 
-setup: ## First-time project setup
+laravel-new: ## Install fresh Laravel into current directory (no local PHP needed)
+	@echo ">> Building PHP image..."
+	$(DC) build php
+	@echo ">> Installing Laravel via composer container..."
+	$(DC) run --rm --no-deps --entrypoint="" php \
+		sh -c "composer create-project laravel/laravel /tmp/laravel-app --prefer-dist --no-interaction \
+		       && cp -rn /tmp/laravel-app/. /var/www/html/ 2>/dev/null || true \
+		       && rm -rf /tmp/laravel-app"
+	@echo ""
+	@echo "  Laravel installed! Run: make setup DB=$(DB)"
+
+setup: ## First-time project setup (assumes Laravel is already present)
 	@cp -n .env.example .env || true
 	@echo ">> Building images..."
 	$(MAKE) build ENV=dev
