@@ -270,13 +270,7 @@ GIT_SHA=e5f6g7h8 DEPLOY_PATH=/var/www/app ENVIRONMENT=prod bash scripts/rollback
 
 Rollback is **instant** — it only switches the symlink and restarts containers. No image pull needed.
 
-### Why git SHA instead of a timestamp?
-
-| Timestamp `20240319150000` | Git SHA `e5f6g7h8` |
-|---|---|
-| No link to code | `git show e5f6g7h8` — you know exactly what you deployed |
-| Timezone ambiguity | Globally unique identifier |
-| "When was this?" | "What was in this?" |
+Each release directory is named after the git commit SHA, so you can always trace exactly what code is running: `git show i9j0k1l2`.
 
 ---
 
