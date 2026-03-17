@@ -69,3 +69,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ── Laravel Reverb — WebSocket server ────────────────────────────────────
+  # Requires: composer require laravel/reverb
+  # Docs: https://laravel.com/docs/reverb
+  reverb:
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+      target: development
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    container_name: ${APP_NAME:-laravel}_reverb
+    command: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080", "--debug"]
+    ports:
+      - "${REVERB_PORT:-8080}:8080"
+    volumes:
+      - ./:/var/www/html:cached
+    env_file: .env
+    networks:
+      - laravel
+    restart: unless-stopped
+    profiles: [reverb]
+    depends_on:
+      php:
+        condition: service_healthy
