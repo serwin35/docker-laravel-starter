@@ -1,0 +1,75 @@
+# =============================================================================
+# Rollback Workflow — manual one-click rollback to previous release
+# All ${{ }} expressions are in env: blocks (never directly in run:)
+# =============================================================================
+
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to roll back"
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+      release:
+        description: "Specific release timestamp (blank = previous release)"
+        required: false
+
+jobs:
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Install SSH key
+        env:
+          SSH_KEY:  ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Execute rollback
+        env:
+          SSH_USER:    ${{ secrets.SSH_USER }}
+          SSH_HOST:    ${{ secrets.SSH_HOST }}
+          SSH_PORT:    ${{ vars.SSH_PORT }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          DB_PROFILE:  ${{ vars.DB_PROFILE }}
+          RELEASE:     ${{ github.event.inputs.release }}
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -p "${SSH_PORT:-22}" \
+              "${SSH_USER}@${SSH_HOST}" \
+              DEPLOY_PATH="$DEPLOY_PATH" \
+              ENVIRONMENT="$ENVIRONMENT" \
+              DB_PROFILE="${DB_PROFILE:-mysql}" \
+              RELEASE="$RELEASE" \
+              bash "${DEPLOY_PATH}/scripts/rollback.sh"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Health check
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          for i in $(seq 1 6); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/up" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (HTTP 200)"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS — retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check FAILED after rollback"
+          exit 1

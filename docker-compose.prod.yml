@@ -1,0 +1,76 @@
+# =============================================================================
+# Docker Compose — PRODUCTION overrides
+#
+# - Production PHP build target (code baked into image)
+# - Images pulled from GHCR (set IMAGE_TAG in .env)
+# - No bind mounts — immutable containers
+# - Strict resource limits
+# - JSON logging for aggregation (CloudWatch, Loki, etc.)
+# =============================================================================
+
+services:
+
+  nginx:
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/your-app}/nginx:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: .docker/nginx/Dockerfile
+      target: production
+    volumes: []
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+
+  php:
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/your-app}/php:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+      target: production
+    volumes: []
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+
+  queue:
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/your-app}/php:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+      target: production
+    volumes: []
+    restart: always
+    command: ["php", "artisan", "queue:work", "--sleep=3", "--tries=3", "--timeout=90", "--max-time=3600"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  scheduler:
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/your-app}/php:${IMAGE_TAG:-latest}
+    build:
+      context: .docker/cron
+    volumes: []
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

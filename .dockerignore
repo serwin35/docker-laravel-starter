@@ -1,0 +1,44 @@
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── CI/CD ─────────────────────────────────────────────────────────────────────
+.github
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+docker-compose*.yml
+.dockerignore
+
+# ── Dependencies (built inside image) ────────────────────────────────────────
+vendor
+node_modules
+
+# ── Environment files (NEVER bake secrets into images) ────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Test & dev tooling ────────────────────────────────────────────────────────
+tests
+phpunit.xml
+phpstan.neon
+.phpunit.cache
+.phpunit.result.cache
+jest.config.*
+
+# ── Storage / logs (runtime, not baked in) ────────────────────────────────────
+storage/logs/*.log
+storage/framework/cache
+storage/framework/sessions
+storage/framework/views
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea
+.vscode
+*.swp
+*.swo
+
+# ── Documentation ─────────────────────────────────────────────────────────────
+*.md
+docs

@@ -1,0 +1,44 @@
+# =============================================================================
+# Docker Compose — DEVELOPMENT overrides
+#
+# Adds: Xdebug, Vite dev server, Mailpit (fake SMTP), NPM watcher
+# =============================================================================
+
+services:
+
+  php:
+    build:
+      target: development
+    environment:
+      XDEBUG_MODE: ${XDEBUG_MODE:-debug}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  queue:
+    build:
+      target: development
+
+  # ── Vite / NPM dev server ─────────────────────────────────────────────────
+  npm:
+    image: node:22-alpine
+    container_name: ${APP_NAME:-laravel}_npm
+    working_dir: /var/www/html
+    entrypoint: ["npm"]
+    ports:
+      - "${NPM_PORT:-3000}:3000"
+      - "${VITE_PORT:-5173}:5173"
+    volumes:
+      - ./:/var/www/html:cached
+    networks:
+      - laravel
+    profiles: [npm]
+
+  # ── Mailpit — fake SMTP + web UI ──────────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ${APP_NAME:-laravel}_mailpit
+    ports:
+      - "${MAIL_UI_PORT:-8025}:8025"   # Web UI
+    networks:
+      - laravel
+    restart: unless-stopped

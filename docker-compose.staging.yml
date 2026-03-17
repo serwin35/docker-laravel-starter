@@ -1,0 +1,55 @@
+# =============================================================================
+# Docker Compose — STAGING overrides
+#
+# - Production PHP build target (code baked into image)
+# - Images pulled from GHCR (set IMAGE_TAG in .env)
+# - No bind mounts — immutable containers
+# - Resource limits (moderate)
+# =============================================================================
+
+services:
+
+  nginx:
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/your-app}/nginx:${IMAGE_TAG:-staging}
+    build:
+      context: .
+      dockerfile: .docker/nginx/Dockerfile
+      target: production
+    volumes: []
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+  php:
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/your-app}/php:${IMAGE_TAG:-staging}
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+      target: production
+    volumes: []
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  queue:
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/your-app}/php:${IMAGE_TAG:-staging}
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+      target: production
+    volumes: []
+    restart: always
+    command: ["php", "artisan", "queue:work", "--sleep=3", "--tries=3", "--timeout=90", "--max-time=3600"]
+
+  scheduler:
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/your-app}/php:${IMAGE_TAG:-staging}
+    build:
+      context: .docker/cron
+    volumes: []
+    restart: always

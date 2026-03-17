@@ -1,0 +1,302 @@
+# =============================================================================
+# Deploy Workflow — Dynamic .env + Docker image build & SSH deploy
+#
+# Environments (configure in GitHub → Settings → Environments):
+#   dev     → push to `develop` branch
+#   staging → push to `staging` branch
+#   prod    → push to `main`   branch  +  required reviewers
+#
+# Required secrets per GitHub Environment:
+#   SSH_HOST       — server IP / hostname
+#   SSH_USER       — deploy user (e.g. deploy)
+#   SSH_KEY        — private SSH key (ED25519 recommended)
+#
+# Required vars per GitHub Environment:
+#   SSH_PORT       — SSH port           (default: 22)
+#   DEPLOY_PATH    — e.g. /var/www/myapp
+#   APP_URL        — e.g. https://staging.myapp.com
+#   DB_PROFILE     — mysql | pgsql      (default: mysql)
+#
+# All remaining vars/secrets are auto-written into .env via dynamic builder.
+# =============================================================================
+
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main      # → prod
+      - staging   # → staging
+      - develop   # → dev
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+      image_tag:
+        description: "Docker image tag (leave blank for git SHA)"
+        required: false
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # never cancel in-flight deploys
+
+jobs:
+  # ── Resolve deployment metadata ──────────────────────────────────────────────
+  prepare:
+    name: Prepare deployment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      image_tag:   ${{ steps.resolve.outputs.image_tag }}
+    steps:
+      - name: Resolve environment & tag
+        id: resolve
+        env:
+          MANUAL_ENV: ${{ github.event.inputs.environment }}
+          MANUAL_TAG: ${{ github.event.inputs.image_tag }}
+          REF_NAME:   ${{ github.ref_name }}
+          SHA:        ${{ github.sha }}
+        run: |
+          if [ -n "$MANUAL_ENV" ]; then
+            ENV="$MANUAL_ENV"
+          elif [ "$REF_NAME" = "main" ]; then
+            ENV="prod"
+          elif [ "$REF_NAME" = "staging" ]; then
+            ENV="staging"
+          else
+            ENV="dev"
+          fi
+
+          TAG="${MANUAL_TAG:-$SHA}"
+
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$TAG"   >> "$GITHUB_OUTPUT"
+
+          echo "Resolved: env=$ENV  tag=$TAG"
+
+  # ── Build & push Docker images to GHCR ──────────────────────────────────────
+  build:
+    name: Build images
+    runs-on: ubuntu-latest
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      php_image:   ${{ steps.images.outputs.php_image }}
+      nginx_image: ${{ steps.images.outputs.nginx_image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image names
+        id: images
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          REPO=$(echo "$REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          echo "php_image=ghcr.io/${REPO}/php"     >> "$GITHUB_OUTPUT"
+          echo "nginx_image=ghcr.io/${REPO}/nginx" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Build frontend assets
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build & push PHP image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: .docker/php/Dockerfile
+          target: production
+          push: true
+          tags: |
+            ${{ steps.images.outputs.php_image }}:${{ needs.prepare.outputs.image_tag }}
+            ${{ steps.images.outputs.php_image }}:${{ needs.prepare.outputs.environment }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            PHP_VERSION=8.4
+            UID=1000
+            GID=1000
+
+      - name: Build & push Nginx image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: .docker/nginx/Dockerfile
+          target: production
+          push: true
+          tags: |
+            ${{ steps.images.outputs.nginx_image }}:${{ needs.prepare.outputs.image_tag }}
+            ${{ steps.images.outputs.nginx_image }}:${{ needs.prepare.outputs.environment }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy to target server via SSH ─────────────────────────────────────────
+  deploy:
+    name: Deploy → ${{ needs.prepare.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    environment: ${{ needs.prepare.outputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Dynamic .env builder ─────────────────────────────────────────────────
+      # Dumps ALL GitHub Environment vars + secrets into .env
+      # without requiring each key to be enumerated manually.
+      - name: Build .env from GitHub Environment
+        env:
+          ALL_VARS:    ${{ toJSON(vars) }}
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          # Runtime overrides injected explicitly
+          _IMAGE_TAG:         ${{ needs.prepare.outputs.image_tag }}
+          _GITHUB_REPOSITORY: ${{ github.repository }}
+          _ENVIRONMENT:       ${{ needs.prepare.outputs.environment }}
+        run: |
+          # Write all environment vars
+          echo "$ALL_VARS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' >> .env
+
+          # Write secrets (skip GITHUB_TOKEN and blank values)
+          echo "$ALL_SECRETS" | jq -r '
+            to_entries[]
+            | select(
+                .key != "GITHUB_TOKEN"
+                and (.value | length) > 0
+                and (.key | startswith("SSH_") | not)
+              )
+            | "\(.key)=\(.value)"
+          ' >> .env
+
+          # Always override runtime values
+          {
+            echo "IMAGE_TAG=${_IMAGE_TAG}"
+            echo "GITHUB_REPOSITORY=${_GITHUB_REPOSITORY}"
+            echo "APP_ENV=$( [ \"${_ENVIRONMENT}\" = 'prod' ] && echo 'production' || echo \"${_ENVIRONMENT}\" )"
+          } >> .env
+
+          echo "--- .env preview (secrets redacted) ---"
+          grep -v -iE "(PASSWORD|SECRET|KEY|TOKEN)" .env || true
+
+      - name: Upload .env artifact for debugging (1 day)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotenv-${{ needs.prepare.outputs.environment }}-${{ needs.prepare.outputs.image_tag }}
+          path: .env
+          retention-days: 1
+
+      # ── SSH setup ────────────────────────────────────────────────────────────
+      - name: Install SSH key
+        env:
+          SSH_KEY:  ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Copy .env to server
+        env:
+          SSH_USER:    ${{ secrets.SSH_USER }}
+          SSH_HOST:    ${{ secrets.SSH_HOST }}
+          SSH_PORT:    ${{ vars.SSH_PORT || '22' }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          scp -i ~/.ssh/deploy_key \
+              -P "$SSH_PORT" \
+              .env \
+              "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/.env"
+
+      - name: Fetch scripts from repo (for server)
+        uses: actions/checkout@v4
+
+      - name: Copy deploy scripts to server
+        env:
+          SSH_USER:    ${{ secrets.SSH_USER }}
+          SSH_HOST:    ${{ secrets.SSH_HOST }}
+          SSH_PORT:    ${{ vars.SSH_PORT }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          scp -i ~/.ssh/deploy_key \
+              -P "${SSH_PORT:-22}" \
+              -r scripts/ \
+              "${SSH_USER}@${SSH_HOST}:${DEPLOY_PATH}/scripts/"
+
+      - name: Run deploy script on server
+        env:
+          SSH_USER:    ${{ secrets.SSH_USER }}
+          SSH_HOST:    ${{ secrets.SSH_HOST }}
+          SSH_PORT:    ${{ vars.SSH_PORT }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          ENVIRONMENT: ${{ needs.prepare.outputs.environment }}
+          IMAGE_TAG:   ${{ needs.prepare.outputs.image_tag }}
+          GIT_SHA:     ${{ github.sha }}
+          DB_PROFILE:  ${{ vars.DB_PROFILE }}
+          GH_ACTOR:    ${{ github.actor }}
+          GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -p "${SSH_PORT:-22}" \
+              "${SSH_USER}@${SSH_HOST}" \
+              DEPLOY_PATH="$DEPLOY_PATH" \
+              ENVIRONMENT="$ENVIRONMENT" \
+              IMAGE_TAG="$IMAGE_TAG" \
+              GIT_SHA="$GIT_SHA" \
+              DB_PROFILE="${DB_PROFILE:-mysql}" \
+              GH_ACTOR="$GH_ACTOR" \
+              GH_TOKEN="$GH_TOKEN" \
+              bash -c '
+                echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+                bash "${DEPLOY_PATH}/scripts/deploy.sh"
+              '
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+  # ── Smoke test (post-deploy health check) ────────────────────────────────────
+  smoke-test:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy]
+    environment: ${{ needs.prepare.outputs.environment }}
+
+    steps:
+      - name: Wait for application to be ready
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          echo "Checking ${APP_URL}/up ..."
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/up" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (HTTP 200)"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS — retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check FAILED after 12 attempts (2 minutes)"
+          exit 1

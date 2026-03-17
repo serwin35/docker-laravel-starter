@@ -1,0 +1,33 @@
+# ── Environment files ─────────────────────────────────────────────────────────
+.env
+.env.dev
+.env.staging
+.env.prod
+!.env.example
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+/vendor/
+node_modules/
+
+# ── Laravel runtime ──────────────────────────────────────────────────────────
+/bootstrap/cache/*.php
+/storage/*.key
+/storage/framework/cache/data/
+/storage/framework/sessions/
+/storage/framework/views/
+/storage/logs/
+
+# ── Build artifacts ───────────────────────────────────────────────────────────
+/public/hot
+/public/build
+
+# ── Docker data volumes ───────────────────────────────────────────────────────
+.mysql/
+.pgsql/
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
