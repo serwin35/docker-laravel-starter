@@ -212,3 +212,4 @@ volumes:
   mysql_data:
   pgsql_data:
   redis_data:
+  minio_data:
