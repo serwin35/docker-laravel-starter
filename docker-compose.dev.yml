@@ -59,7 +59,7 @@ services:
       MINIO_ROOT_USER:     ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
-      - minio_data:/data
+      - ./.data/minio:/data
     networks:
       - laravel
     restart: unless-stopped

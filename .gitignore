@@ -21,9 +21,9 @@ node_modules/
 /public/hot
 /public/build
 
-# ── Docker data volumes ───────────────────────────────────────────────────────
-.mysql/
-.pgsql/
+# ── Local data directories (DB, Redis, MinIO) ────────────────────────────────
+# Bind-mounted into containers. Never commit your database data.
+.data/
 
 # ── IDE ───────────────────────────────────────────────────────────────────────
 .idea/
