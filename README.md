@@ -1,228 +1,359 @@
+<div align="center">
+
 # 🐋 Laravel Docker Starter Kit
 
-Production-ready Docker environment for Laravel with full CI/CD pipeline.
+**Production-ready Docker environment for Laravel — dev, staging and prod in one place.**
 
-**Stack:** PHP 8.4 · Nginx · MySQL 8.4 or PostgreSQL 16 · Redis 7 · Mailpit
+[![Stars](https://img.shields.io/github/stars/serwin35/docker-laravel-starter?style=flat-square&color=yellow)](https://github.com/serwin35/docker-laravel-starter/stargazers)
+[![Forks](https://img.shields.io/github/forks/serwin35/docker-laravel-starter?style=flat-square)](https://github.com/serwin35/docker-laravel-starter/network)
+[![Issues](https://img.shields.io/github/issues/serwin35/docker-laravel-starter?style=flat-square)](https://github.com/serwin35/docker-laravel-starter/issues)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](./CONTRIBUTING.md)
+[![License](https://img.shields.io/github/license/serwin35/docker-laravel-starter?style=flat-square)](./LICENSE)
+
+![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
+![Laravel](https://img.shields.io/badge/Laravel-11%2B-FF2D20?style=flat-square&logo=laravel&logoColor=white)
+![Nginx](https://img.shields.io/badge/Nginx-stable-009639?style=flat-square&logo=nginx&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-8.4-005C84?style=flat-square&logo=mysql&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis&logoColor=white)
+
+</div>
 
 ---
 
-## Features
+## ✨ Why This Starter Kit?
 
-- **Multi-stage PHP Dockerfile** — separate dev (Xdebug) and prod (Opcache + JIT) images
-- **MySQL 8.4 or PostgreSQL 16** — switch via Docker profiles
-- **Three environments** — `dev`, `staging`, `prod` via compose overlay files
-- **Releases system** — Capistrano-style `releases/` + `current` symlink, one-click rollback
-- **Dynamic `.env`** — GitHub Actions auto-builds `.env` from all Environment vars/secrets
-- **CI pipeline** — PHP Pint, PHPStan, tests against both MySQL and PostgreSQL
-- **CD pipeline** — build → push to GHCR → SSH deploy → migrate → smoke test
-- **Makefile** — ergonomic shortcuts for all common operations
+A complete, battle-tested Docker setup that goes further than Laravel Sail:
+
+| Feature | Laravel Sail | **This starter** |
+|---|:---:|:---:|
+| Dev environment | ✅ | ✅ |
+| Staging environment | ❌ | ✅ |
+| Production environment | ❌ | ✅ |
+| Multi-stage Dockerfile (dev/prod) | ❌ | ✅ |
+| CI/CD with GitHub Actions | ❌ | ✅ |
+| Dynamic `.env` from GitHub Environments | ❌ | ✅ |
+| Releases system + rollback | ❌ | ✅ |
+| MySQL 8.4 or PostgreSQL 16 (switchable) | ✅ | ✅ |
+| Xdebug 3 pre-configured | ❌ | ✅ |
+| Opcache + JIT in production | ❌ | ✅ |
+| Mailpit (fake SMTP) | ✅ | ✅ |
+| Queue worker + Scheduler | ❌ | ✅ |
+| Security headers in Nginx | ❌ | ✅ |
 
 ---
 
-## Directory Structure
+## 🧱 Stack
+
+```
+┌─────────────────────────────────────────────────┐
+│                    Nginx (stable)                │
+│         Security headers · Gzip · Cache          │
+└─────────────────────┬───────────────────────────┘
+                      │ FastCGI
+┌─────────────────────▼───────────────────────────┐
+│               PHP 8.4-FPM (Alpine)               │
+│    Extensions: gd, intl, bcmath, redis, ...      │
+│    DEV:  Xdebug 3                                │
+│    PROD: Opcache + JIT + entrypoint cache        │
+└─────────┬──────────────────┬────────────────────┘
+          │                  │
+┌─────────▼──────┐  ┌────────▼────────────────────┐
+│ MySQL 8.4      │  │  Redis 7                      │
+│  OR            │  │  Cache · Queue · Sessions     │
+│ PostgreSQL 16  │  └─────────────────────────────┘
+│ (via profiles) │
+└────────────────┘
+
+Queue Worker · Scheduler (cron) · Mailpit (dev)
+```
+
+---
+
+## 📦 Directory Structure
 
 ```
 .
 ├── .docker/
 │   ├── php/
 │   │   ├── Dockerfile          # Multi-stage: development | production
-│   │   ├── php.ini             # Dev PHP config (debug on, opcache off)
-│   │   ├── php-prod.ini        # Prod PHP config (opcache + JIT enabled)
+│   │   ├── php.ini             # Dev config (debug on, opcache off)
+│   │   ├── php-prod.ini        # Prod config (opcache + JIT)
 │   │   ├── www.conf            # PHP-FPM pool
-│   │   ├── xdebug.ini          # Xdebug 3 config
-│   │   └── entrypoint.sh       # Prod entrypoint (config:cache etc.)
+│   │   ├── xdebug.ini          # Xdebug 3 (dev only)
+│   │   └── entrypoint.sh       # Prod: config:cache, route:cache...
 │   ├── nginx/
 │   │   ├── Dockerfile
-│   │   └── conf.d/app.conf     # Nginx config (gzip, security headers)
-│   ├── cron/
-│   │   └── Dockerfile          # Laravel scheduler (every minute)
+│   │   └── conf.d/app.conf     # Gzip, security headers, PHP-FPM
+│   ├── cron/Dockerfile         # Laravel Scheduler
 │   ├── mysql/init/             # MySQL init scripts
 │   └── pgsql/init/             # PostgreSQL init scripts
-├── .github/workflows/
-│   ├── ci.yml                  # Lint + tests on PR (MySQL & PostgreSQL)
-│   ├── deploy.yml              # Build images → SSH deploy with releases
-│   └── rollback.yml            # One-click rollback via GitHub UI
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml              # Tests on PR (MySQL + PostgreSQL)
+│   │   ├── deploy.yml          # Build GHCR image → SSH deploy
+│   │   └── rollback.yml        # One-click rollback from GitHub UI
+│   ├── ISSUE_TEMPLATE/         # Bug + Feature request templates
+│   └── pull_request_template.md
 ├── scripts/
-│   ├── deploy.sh               # Server-side: creates release, switches symlink
-│   └── rollback.sh             # Server-side: reverts to previous release
+│   ├── deploy.sh               # Releases by git SHA, current symlink
+│   └── rollback.sh             # Instant rollback to previous SHA
 ├── docker-compose.yml          # Base services
-├── docker-compose.dev.yml      # Dev additions: Xdebug, Mailpit, Vite
-├── docker-compose.staging.yml  # Staging: prod images, resource limits
-├── docker-compose.prod.yml     # Prod: prod images, strict limits, logging
+├── docker-compose.dev.yml      # + Xdebug, Mailpit, Vite
+├── docker-compose.staging.yml  # Prod images, resource limits
+├── docker-compose.prod.yml     # Prod images, strict limits, JSON logging
 ├── .env.example
-└── Makefile
+└── Makefile                    # Shortcuts for all operations
 ```
 
 ---
 
-## Quick Start (Development)
+## 🚀 Quick Start
+
+### 1. Prerequisites
+
+- Docker Desktop (or Docker Engine + Compose v2)
+- GitHub CLI: `brew install gh`
+
+### 2. Clone & Setup
 
 ```bash
-# 1. Clone the repo and copy your Laravel app here (or start fresh)
 git clone https://github.com/serwin35/docker-laravel-starter.git
 cd docker-laravel-starter
 
-# 2. Copy environment file
-cp .env.example .env
-
-# 3. First-time setup (builds images, starts containers, runs migrations)
-make setup DB=mysql      # or DB=pgsql
-
-# 4. Open http://localhost:80
+# Copy your Laravel app here, then:
+make setup DB=mysql        # or DB=pgsql
 ```
 
-### Manual setup
+That's it. App running at **http://localhost:80**
+
+### 3. Manual Setup
 
 ```bash
-# Start with MySQL
-COMPOSE_PROFILES=mysql make up
+cp .env.example .env
 
-# Start with PostgreSQL
+# Start with MySQL (default)
+make up DB=mysql
+
+# OR start with PostgreSQL
 make up DB=pgsql
+
+# Install dependencies
+make composer ARGS="install"
+make artisan  ARGS="key:generate"
+make migrate
 
 # Start Vite dev server (separate terminal)
 make npm-dev
-
-# Open Mailpit UI (fake SMTP)
-open http://localhost:8025
 ```
 
 ---
 
-## Makefile Reference
+## 🗄️ Database Selection
+
+Switch between MySQL and PostgreSQL via Docker profiles:
 
 ```bash
-make up              # Start dev environment (DB=mysql|pgsql)
-make down            # Stop all containers
-make ps              # Container status
-make logs            # Tail logs (ARGS=nginx to filter)
-make shell           # bash in php container
-make tinker          # Laravel Tinker
-
-make migrate         # Run migrations
-make seed            # Run seeders
-make fresh           # migrate:fresh --seed
-
-make test            # Run PHPUnit tests
-make lint            # PHP Pint code style
-make analyse         # PHPStan static analysis
-
-make artisan  ARGS="make:model Foo -mcr"
-make composer ARGS="require spatie/laravel-permission"
-make npm      ARGS="run build"
-
-make setup           # First-time full setup
-make cache-clear     # Clear all Laravel caches
+make up DB=mysql    # mysql:8.4
+make up DB=pgsql    # postgres:16-alpine
 ```
 
----
+Update `.env` accordingly:
 
-## Database Selection
-
-The database is activated via **Docker profiles**:
-
-| Profile | Variable | Host in .env |
-|---------|----------|--------------|
-| `mysql` | `DB_CONNECTION=mysql` | `DB_HOST=mysql` |
-| `pgsql` | `DB_CONNECTION=pgsql` | `DB_HOST=pgsql` |
-
-```bash
-# MySQL (default)
-make up DB=mysql
+```ini
+# MySQL
+DB_CONNECTION=mysql
+DB_HOST=mysql
+DB_PORT=3306
 
 # PostgreSQL
-make up DB=pgsql
+DB_CONNECTION=pgsql
+DB_HOST=pgsql
+DB_PORT=5432
 ```
 
 ---
 
-## Server Layout (Production)
+## 🛠️ Makefile Reference
+
+```bash
+# Environment
+make up              # Start dev (DB=mysql|pgsql)
+make down            # Stop all containers
+make ps              # Container status
+make logs            # Tail logs (ARGS=nginx to filter one service)
+make shell           # bash in php container
+
+# Laravel
+make artisan  ARGS="make:model Post -mcr"
+make composer ARGS="require spatie/laravel-permission"
+make migrate
+make seed
+make fresh           # migrate:fresh --seed
+make tinker
+
+# Testing
+make test
+make coverage
+make lint            # PHP Pint
+make analyse         # PHPStan
+
+# Frontend
+make npm-dev         # Vite dev server
+make npm-build       # Production assets
+make npm ARGS="add alpinejs"
+
+# Database CLI
+make db-mysql
+make db-pgsql
+make db-redis
+
+# First-time setup
+make setup           # build + up + composer install + key:generate + migrate
+```
+
+---
+
+## 🔁 Environments
+
+### Development (default)
+
+```bash
+make up              # docker compose -f base -f dev
+```
+
+Includes: Xdebug, Mailpit (http://localhost:8025), Vite dev server, bind mounts.
+
+### Staging
+
+```bash
+make up ENV=staging DB=mysql
+```
+
+Production PHP image, resource limits (1 CPU / 512M RAM).
+
+### Production
+
+```bash
+make up ENV=prod DB=mysql
+```
+
+Production image, strict limits (2 CPU / 1G RAM), JSON logging, `restart: always`.
+
+---
+
+## ⚙️ CI/CD Pipeline
+
+### CI (every Pull Request)
 
 ```
-/var/www/myapp/
-├── releases/
-│   ├── 20240317120000/     ← old release
-│   ├── 20240318093000/     ← old release
-│   └── 20240319150000/     ← new release
-├── shared/
-│   ├── .env                ← written by CI
-│   └── storage/            ← persistent (logs, uploads)
-├── current -> releases/20240319150000    ← active symlink
-├── docker-compose.yml
-├── docker-compose.prod.yml
-└── scripts/
-    ├── deploy.sh
-    └── rollback.sh
+Pull Request → Lint (Pint) → PHPStan → Tests on MySQL → Tests on PostgreSQL
 ```
 
-Deploy switches `current` to the new release atomically. The last **5 releases** are kept automatically.
+### CD (push to branch)
+
+```
+develop → dev server
+staging → staging server
+main    → production server  (+ required reviewers)
+```
+
+### Deploy Flow
+
+```
+1. npm run build               (frontend assets)
+2. Build PHP image (prod)      (code + vendor baked in)
+3. Build Nginx image (prod)    (public/ assets baked in)
+4. Push both to GHCR
+5. Dynamic .env built from GitHub Environment vars/secrets
+6. SSH → run deploy.sh:
+   - Create releases/{git-sha}/
+   - Symlink shared/.env + shared/storage/
+   - Switch current → new release (atomic)
+   - docker compose up -d --wait
+   - php artisan migrate --force
+7. Smoke test: GET /up → 200 OK
+```
 
 ### Rollback
 
-One-click rollback from GitHub Actions UI:
-> **Actions → Rollback → Run workflow** → choose environment → run
-
-Or manually on the server:
 ```bash
-DEPLOY_PATH=/var/www/myapp ENVIRONMENT=prod bash scripts/rollback.sh
+# Via GitHub UI (recommended):
+Actions → Rollback → choose env → Run workflow
 
-# Roll back to a specific release
-DEPLOY_PATH=/var/www/myapp ENVIRONMENT=prod RELEASE=20240318093000 bash scripts/rollback.sh
+# Via SSH:
+DEPLOY_PATH=/var/www/app ENVIRONMENT=prod bash scripts/rollback.sh
+
+# To specific commit:
+GIT_SHA=abc1234 DEPLOY_PATH=/var/www/app ENVIRONMENT=prod bash scripts/rollback.sh
 ```
 
 ---
 
-## CI/CD Setup
+## 🔐 GitHub Environments Setup
 
-### 1. GitHub Environments
+Create three environments: `dev`, `staging`, `prod` in **Settings → Environments**.
 
-Create three environments in **Settings → Environments**: `dev`, `staging`, `prod`.
+Required per environment:
 
-Add required reviewers to `prod` for protection.
-
-### 2. Secrets & Variables per Environment
-
-| Secret / Var | Type | Description |
+| Type | Name | Description |
 |---|---|---|
-| `SSH_HOST` | Secret | Server IP or hostname |
-| `SSH_USER` | Secret | Deploy user (e.g. `deploy`) |
-| `SSH_KEY`  | Secret | Private SSH key (ED25519) |
-| `SSH_PORT` | Var    | SSH port (default `22`) |
-| `DEPLOY_PATH` | Var | Absolute path on server |
-| `APP_URL`  | Var    | App URL for smoke test |
-| `DB_PROFILE` | Var  | `mysql` or `pgsql` |
-| `APP_KEY`  | Secret | Laravel app key |
-| `DB_PASSWORD` | Secret | Database password |
-| `REDIS_PASSWORD` | Secret | Redis password |
-| *(any other .env vars)* | Var/Secret | Auto-injected into `.env` |
+| Secret | `SSH_HOST` | Server IP or hostname |
+| Secret | `SSH_USER` | Deploy user |
+| Secret | `SSH_KEY` | Private SSH key |
+| Var | `SSH_PORT` | SSH port (default 22) |
+| Var | `DEPLOY_PATH` | Absolute path on server |
+| Var | `APP_URL` | For smoke test |
+| Var | `DB_PROFILE` | `mysql` or `pgsql` |
+| Secret | `APP_KEY` | Laravel app key |
+| Secret | `DB_PASSWORD` | Database password |
 
-All vars and secrets are **automatically written to `.env`** — no need to enumerate each one in the workflow.
-
-### 3. Branch → Environment mapping
-
-| Branch    | Deploys to |
-|-----------|------------|
-| `develop` | `dev`      |
-| `staging` | `staging`  |
-| `main`    | `prod`     |
+All other vars/secrets are **automatically written to `.env`** — no manual enumeration needed.
 
 ---
 
-## Xdebug (Development)
+## 🐛 Xdebug
 
-Xdebug 3 is pre-configured for PhpStorm on port `9003`.
-
-In VS Code, set `"xdebug.port": 9003` in your launch config.
+Pre-configured for PhpStorm and VS Code on port `9003`:
 
 ```ini
-# .env — enable/disable per session
+# .env
 XDEBUG_MODE=debug       # step debugging
-XDEBUG_MODE=coverage    # code coverage only
-XDEBUG_MODE=off         # disabled
+XDEBUG_MODE=coverage    # code coverage
+XDEBUG_MODE=off         # disabled (faster)
 ```
 
 ---
 
-## License
+## 🤝 Contributing
 
-MIT — use freely in commercial projects.
+Contributions are welcome! This project uses GitHub Actions — your merged PR counts toward the **Open Sourcerer** achievement.
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for guidelines.
+
+**Good first issues:** [github.com/serwin35/docker-laravel-starter/issues?q=label%3A%22good+first+issue%22](https://github.com/serwin35/docker-laravel-starter/issues?q=label%3A%22good+first+issue%22)
+
+---
+
+## 💬 Discussions & Support
+
+Have a question or idea? Use [GitHub Discussions](https://github.com/serwin35/docker-laravel-starter/discussions).
+
+---
+
+## ⭐ Show Your Support
+
+If this starter kit saves you time — please **star ⭐ the repo**.
+It helps others discover the project and motivates continued development.
+
+---
+
+## 📄 License
+
+MIT — free to use in commercial projects.
+
+---
+
+<div align="center">
+Made with ❤️ by <a href="https://github.com/serwin35">@serwin35</a>
+</div>
